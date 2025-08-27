@@ -6,6 +6,8 @@ const Request = http_utils.Request;
 const Response = http_utils.Response;
 const HTTPMethod = http_utils.HTTPMethod;
 
+const Header = http_utils.Header;
+
 // Primero que nada... Que mierda quiere hacer un cliente HTTP.
 
 // 1- Mandar una peticion
@@ -29,17 +31,52 @@ const HTTPMethod = http_utils.HTTPMethod;
 // Ahora viene lo bueno..
 // Funcion para que me devuelva un struct de tipo HttpClient
 
+pub fn getDefaultHeaders() ?[]const Header {
+    return &[_]Header{
+        .{
+            .name = "Host",
+            .value = "example.com",
+        },
+        .{
+            .name = "User-Agent",
+            .value = "ZigHTTPClient/1.0",
+        },
+        .{
+            .name = "Accept",
+            .value = "*/*",
+        },
+        .{
+            .name = "Connection",
+            .value = "close",
+        },
+    };
+}
+
 pub const RequestOptions = struct {
+    allocator: std.mem.Allocator,
     method: HTTPMethod = .GET,
     version: []const u8 = "1.1",
     body: ?[]const u8 = null,
-    header: ?[]const u8 = null,
+    headers: ?[]const Header = null,
     user_agent: []const u8 = "ZigHTTPClient/1.0",
     content_type: ?[]const u8 = null,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return .{
+            .allocator = allocator,
+            .method = .GET,
+            .version = "1.1",
+            .body = null,
+            .headers = getDefaultHeaders(),
+            .content_type = null,
+        };
+    }
 };
 
 pub const HttpClient = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     const Self = @This();
 
@@ -47,26 +84,38 @@ pub const HttpClient = struct {
         return .{ .allocator = allocator };
     }
 
-    pub fn fetch(self: *Self, url: []const u8, method: HTTPMethod, Options: HttpOptions) !Response {
-        _ = self;
+    pub fn fetch(self: *Self, url: []const u8, Options: RequestOptions) !void {
 
         // Crear el request.
         // TODO: Tengo qe ver la forma de parsear la parte dle path del url...
-        var request: Request = Request.init(method, url, "1.1", headers.items, "");
+
+        // TODO: Parsear URL properly
+        // Por ahora, separar host y path manualmente
+
+        var request: Request = Request.init(
+            Options.method,
+            url,
+            Options.version,
+            Options.headers.?,
+            Options.body,
+        );
+
+        const request_serialized = try request.serialize(self.allocator);
 
         // crear el socket.
         const socket = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
         defer posix.close(socket);
 
         // Resolver hostname a IP (simplificado)
-        var server_addr = try self.resolveHost(parsed_url.host, parsed_url.port);
+        // var server_addr = try self.resolveHost(parsed_url.host, parsed_url.port);
+        var server_addr = try std.net.Address.parseIp("23.192.228.80", 80);
         // aca deberia de hacer que el url se convierta en la IP para poder pegarla a dicho endpoint.
         // No se si parseIp me deja pasar el url.
 
         // Conectar
         try posix.connect(socket, &server_addr.any, server_addr.getOsSockLen());
 
-        _ = try posix.send(socket, request, 0);
+        _ = try posix.send(socket, request_serialized, 0);
 
         var buf: [1024]u8 = undefined;
         const n = try posix.recv(socket, &buf, 0);
@@ -75,12 +124,16 @@ pub const HttpClient = struct {
 
     // pub fn send() !Response {}
 
-    pub fn get(self: *Self, url: []const u8) !Response {
-        return self.fetch(url, .GET, null);
+    pub fn get(self: Self, url: []const u8) !Response {
+        var options = RequestOptions.init(self.allocator);
+        options.method = .GET;
+        return self.fetch(url, options);
     }
 
-    pub fn post(self: *Self, url: []const u8, body: []const u8) !Response {
-        return self.fetch(url, .POST, body);
+    pub fn post(self: *Self, url: []const u8) !Response {
+        var options = RequestOptions.init(self.allocator);
+        options.method = .POST;
+        return self.fetch(url, options);
     }
 
     pub fn put(self: *Self, url: []const u8, body: []const u8) !Response {
@@ -98,44 +151,77 @@ pub const HttpClient = struct {
     pub fn get_body() !void {}
 
     // Deberia ser parte del server. Pero lo hago aca por temas de prueba
-    pub fn parse_response_to_json() !Response {
-        return 
-    }
+    // pub fn parse_response_to_json() !Response {}
 
     pub fn deinit() void {}
 };
 
-pub fn upperCase(string: []const u8) ![]const u8 {
-    const upper_string: []const u8 = try std.mem.eql(u8, std.ascii.upperString(&string.len, string));
-    return upper_string;
-}
-
 pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+
+    // Crear primero el objeto HttpClient
+
+    var http_client: HttpClient = HttpClient.init(allocator);
+
+    // const host: Header = Header{
+    //     .name = "Host",
+    //     .value = "example.com",
+    // };
+
+    // const user_agent = Header{
+    //     .name = "User-Agent",
+    //     .value = "ZigHTTPClient/1.0",
+    // };
+
+    // const accept = Header{
+    //     .name = "Accept",
+    //     .value = "*/*",
+    // };
+
+    // const connection = Header{
+    //     .name = "Connection",
+    //     .value = "close",
+    // };
+
+    // const language: Header = Header{
+    //     .name = "Accept-Language",
+    //     .value = "en",
+    // };
+
+    // const accept_encoding: Header = Header{
+    //     .name = "Accept-Encoding",
+    //     .value = "identity",
+    // };
+
+    var options = RequestOptions.init(allocator);
+    options.body = "";
+
+    try http_client.fetch("/", options);
 
     //// Prueba de los sockets posix y algunos handlers de std.net: ////
 
     // const allocator = std.heap.page_allocator;
 
-    const sock = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
-    defer posix.close(sock);
+    // const sock = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+    // defer posix.close(sock);
 
-    var my_addr = try std.net.Address.parseIp("0.0.0.0", 0);
-    try posix.bind(sock, &my_addr.any, my_addr.getOsSockLen());
+    // var my_addr = try std.net.Address.parseIp("0.0.0.0", 0);
+    // try posix.bind(sock, &my_addr.any, my_addr.getOsSockLen());
 
-    var server_addr = try std.net.Address.parseIp("23.220.75.245", 80);
-    try posix.connect(sock, &server_addr.any, server_addr.getOsSockLen());
+    // var server_addr = try std.net.Address.parseIp("23.220.75.245", 80);
+    // try posix.connect(sock, &server_addr.any, server_addr.getOsSockLen());
 
-    // Como reverenda mierda hago para configurar esto como en C sin std.net?
+    // // Como reverenda mierda hago para configurar esto como en C sin std.net?
 
-    // Ideas?
+    // // Ideas?
 
-    const request = "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n";
+    // const request = "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n";
 
-    _ = try posix.send(sock, request, 0);
+    // _ = try posix.send(sock, request, 0);
 
-    var buf: [1024]u8 = undefined;
-    const n = try posix.recv(sock, &buf, 0);
-    std.debug.print("Response:\n{s}\n", .{buf[0..n]});
+    // var buf: [1024]u8 = undefined;
+    // const n = try posix.recv(sock, &buf, 0);
+    // std.debug.print("Response:\n{s}\n", .{buf[0..n]});
 
     ////////////////////////////////////////////////////////////////////////////////////////
 }

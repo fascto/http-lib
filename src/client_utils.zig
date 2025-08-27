@@ -36,7 +36,7 @@ pub const Request = struct {
     method: HTTPMethod,
     path: []const u8,
     version: []const u8,
-    headers: []Header,
+    headers: []const Header,
     body: ?[]const u8 = null,
 
     const Self = @This();
@@ -45,7 +45,7 @@ pub const Request = struct {
         method: HTTPMethod,
         path: []const u8,
         version: []const u8,
-        headers: []Header,
+        headers: []const Header,
         body: ?[]const u8,
     ) Request {
         return .{ .method = method, .path = path, .version = version, .headers = headers, .body = body };
